@@ -369,10 +369,16 @@ async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
             name_mention = format_user_mention(from_user.id, user["first_name"])
             if level_changed:
                 # Новый уровень
-                txt = DONE_WITH_LEVEL_UP.format(name=name_mention, n=n_total, title=new_title)
+                txt = DONE_WITH_LEVEL_UP.format(
+                    name=name_mention, n=n_total, title=new_title,
+                    total_crosses=total_crosses
+                )
             else:
                 # Базовое сообщение
-                txt = DONE_ORDER.format(name=name_mention, n=n_total)
+                txt = DONE_ORDER.format(
+                    name=name_mention, n=n_total,
+                    total_crosses=total_crosses, title=new_title
+                )
 
             # Проверяем достижения (40, 100 и 200 заказов)
             if n_total == 40:
