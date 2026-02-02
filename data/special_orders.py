@@ -45,10 +45,10 @@ SPECIAL_ORDERS = {
     "second_chef": {
         "text_template": SECOND_CHEF_APPEAR,
         "probability": 0.12,  # 12%
-        "min_order_index": 3,
+        "min_order_index": 20,
         "max_order_index": 40,
         "user_flag": "has_second_chef_done",
-        "type": "half_next",  # Следующий заказ будет половинным
+        "type": "half_new_order",  # Обычный заказ по уровню, сумма делится пополам
     },
 }
 

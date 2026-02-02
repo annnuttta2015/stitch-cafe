@@ -59,10 +59,12 @@ async def generate_regular_order(level: int) -> list[tuple[str, int]]:
     Returns:
         Список из 3 кортежей (название блюда, количество крестиков)
     """
+    # Уровни 4+ (Шеф-повар) используют тот же пул блюд, что и уровень 3 (Су-шеф)
+    dish_level = min(level, 3)
     opened = []
-    for lv in range(0, level+1):
+    for lv in range(0, dish_level + 1):
         opened.extend(DISHES_BY_LEVEL.get(lv, []))
-    current_pool = DISHES_BY_LEVEL.get(level, DISHES_BY_LEVEL[0])
+    current_pool = DISHES_BY_LEVEL.get(dish_level, DISHES_BY_LEVEL[0])
     cur = random.choice(current_pool)
     pool = [d for d in opened if d != cur]
     random.shuffle(pool)
@@ -175,15 +177,25 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
                         await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
                         return
                     # Если нет предыдущего заказа, генерируем обычный
-                elif order_type == "half_next":
-                    # Второй повар - следующий заказ будет половинным
-                    await db.execute(
-                        "UPDATE users SET has_second_chef_done=1, next_order_half=1 WHERE user_id=?",
-                        (user["user_id"],),
-                    )
-                    await db.commit()
+                elif order_type == "half_new_order":
+                    # Помощь Шефа — обычный заказ по уровню, сумма делится пополам
+                    level = user["level"]
+                    dishes = await generate_regular_order(level)
+                    total = sum(c for (_, c) in dishes)
+                    half_total = total // 2
+                    half_dishes = [(name, max(1, crosses // 2)) for name, crosses in dishes]
+                    half_crosses = sum(v for (_, v) in half_dishes)
+                    if half_dishes and half_crosses != half_total:
+                        diff = half_total - half_crosses
+                        name0, val0 = half_dishes[0]
+                        half_dishes[0] = (name0, max(1, val0 + diff))
+                        half_crosses = half_total
+                    lines = "\n".join([DISH_LINE.format(name=n, crosses=v) for (n, v) in half_dishes])
                     name_mention = format_user_mention(from_user.id, user["first_name"])
-                    text = order_config["text_template"].format(name=name_mention)
+                    text = order_config["text_template"].format(
+                        name=name_mention, half_crosses=half_crosses, dishes=lines
+                    )
+                    await save_active_order(db, user["user_id"], half_dishes, tag)
                     await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
                     return
                 elif order_type == "regular":
@@ -198,17 +210,6 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
             # Обычный заказ
             level = user["level"]
             dishes = await generate_regular_order(level)
-
-            # Проверяем флаг "следующий заказ половинный"
-            next_order_half = user.get("next_order_half", 0)
-            if next_order_half:
-                # Делаем заказ половинным и сбрасываем флаг
-                dishes = [(name, max(1, crosses // 2)) for name, crosses in dishes]
-                await db.execute(
-                    "UPDATE users SET next_order_half=0 WHERE user_id=?", (user["user_id"],)
-                )
-                await db.commit()
-
             total = sum(x[1] for x in dishes)
             lines = "\n".join([DISH_LINE.format(name=n, crosses=v) for (n, v) in dishes])
             name_mention = format_user_mention(from_user.id, user["first_name"])
