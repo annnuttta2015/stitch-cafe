@@ -70,7 +70,7 @@ async def cmd_top(message: Message) -> None:
             if message.chat.type != "private":
                 await message.answer(TOP_SENT_DM)
         except Exception:
-            if message.chat.type != "private":
+            if message.chat.type != "private" and message.from_user is not None:
                 name_mention = format_user_mention(
                     message.from_user.id, message.from_user.first_name or ""
                 )
@@ -101,7 +101,7 @@ async def cmd_top(message: Message) -> None:
         if message.chat.type != "private":
             await message.answer(TOP_SENT_DM)
     except Exception:
-        if message.chat.type != "private":
+        if message.chat.type != "private" and message.from_user is not None:
             name_mention = format_user_mention(
                 message.from_user.id, message.from_user.first_name or ""
             )
@@ -166,7 +166,8 @@ async def cmd_top10(message: Message) -> None:
         text = "\n".join(lines)
         await message.answer(text, parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error fetching top-10 for user {message.from_user.id}: {e}")
+        user_id = message.from_user.id if message.from_user is not None else "?"
+        logger.error(f"Error fetching top-10 for user {user_id}: {e}")
         try:
             await message.answer(
                 "❌ Произошла ошибка при получении рейтинга. Попробуйте позже.",

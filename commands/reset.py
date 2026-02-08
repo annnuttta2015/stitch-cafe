@@ -50,7 +50,8 @@ async def cmd_reset(message: Message) -> None:
         logger.warning(f"Admin {message.from_user.id} cleared the database")
         await message.answer(RESET_SUCCESS.format(name=name_mention), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error resetting data by admin {message.from_user.id}: {e}")
+        admin_id = message.from_user.id if message.from_user is not None else "?"
+        logger.error(f"Error resetting data by admin {admin_id}: {e}")
         try:
             await message.answer(
                 "❌ Произошла ошибка при сбросе данных. Попробуйте позже.",

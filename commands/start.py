@@ -54,7 +54,8 @@ async def cmd_start(message: Message) -> None:
         )
         await message.answer(SELECT_ACTION, reply_markup=keyboard, parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error handling /start for user {message.from_user.id}: {e}")
+        user_id = message.from_user.id if message.from_user is not None else "?"
+        logger.error(f"Error handling /start for user {user_id}: {e}")
         try:
             await message.answer(
                 "❌ Произошла ошибка при запуске. Попробуйте позже.",
@@ -108,4 +109,6 @@ async def on_new_member(event: ChatMemberUpdated) -> None:
                 chat_id=event.chat.id, text=SELECT_ACTION, reply_markup=keyboard, parse_mode="HTML"
             )
     except Exception as e:
-        logger.error(f"Error welcoming new member {event.new_chat_member.user.id}: {e}")
+        new_user = event.new_chat_member.user
+        user_id = new_user.id if new_user is not None else "?"
+        logger.error(f"Error welcoming new member {user_id}: {e}")
