@@ -5,7 +5,7 @@ Provides functions for users, orders and game statistics.
 """
 import json
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Optional, Protocol, cast, runtime_checkable
 
 import aiosqlite
 from loguru import logger
@@ -13,6 +13,22 @@ from loguru import logger
 from data.levels import LEVELS, MAX_LEVEL, ORDERS_PER_LEVEL
 
 DB_PATH = "data/cafe.db"
+
+
+@runtime_checkable
+class _UserLike(Protocol):
+    """Protocol for objects with id and first_name (e.g. Telegram User)."""
+    id: int
+    first_name: Optional[str]
+
+
+class _FakeUser:
+    """Minimal user-like object for ensure_user in fetch_user."""
+    __slots__ = ("id", "first_name")
+
+    def __init__(self, id: int, first_name: Optional[str] = None) -> None:
+        self.id = id
+        self.first_name = first_name
 
 
 @asynccontextmanager
@@ -40,6 +56,7 @@ async def get_db():
     finally:
         if db:
             await db.close()
+
 
 async def migrate(db: aiosqlite.Connection) -> None:
     """
@@ -92,7 +109,8 @@ async def migrate(db: aiosqlite.Connection) -> None:
         logger.error(f"Migration error: {e}")
         raise
 
-async def ensure_user(db: aiosqlite.Connection, from_user) -> None:
+
+async def ensure_user(db: aiosqlite.Connection, from_user: _UserLike) -> None:
     """
     Create user in database if not exists.
 
@@ -114,7 +132,7 @@ async def ensure_user(db: aiosqlite.Connection, from_user) -> None:
         raise
 
 
-async def fetch_user(db: aiosqlite.Connection, user_id: int, first_name: str) -> dict:
+async def fetch_user(db: aiosqlite.Connection, user_id: int, first_name: str) -> dict[str, Any]:
     """
     Fetch user data from database.
 
@@ -132,7 +150,7 @@ async def fetch_user(db: aiosqlite.Connection, user_id: int, first_name: str) ->
         aiosqlite.Error: On SQL execution error
     """
     try:
-        await ensure_user(db, type("U", (), {"id": user_id, "first_name": first_name}))
+        await ensure_user(db, _FakeUser(user_id, first_name))
         cur = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         if not row:
@@ -141,6 +159,7 @@ async def fetch_user(db: aiosqlite.Connection, user_id: int, first_name: str) ->
     except aiosqlite.Error as e:
         logger.error(f"Error fetching user {user_id}: {e}")
         raise
+
 
 async def save_active_order(
     db: aiosqlite.Connection, user_id: int, dishes: list[tuple[str, int]], tag: Optional[str]
@@ -156,7 +175,7 @@ async def save_active_order(
 
     Raises:
         aiosqlite.Error: On SQL execution error
-        json.JSONEncodeError: On serialization error
+        TypeError: On serialization error (non-JSON-serializable value)
     """
     try:
         payload = {"dishes": dishes, "tag": tag}
@@ -165,12 +184,12 @@ async def save_active_order(
             (json.dumps(payload, ensure_ascii=False), user_id),
         )
         await db.commit()
-    except (aiosqlite.Error, json.JSONEncodeError) as e:
+    except (aiosqlite.Error, TypeError) as e:
         logger.error(f"Error saving active order for user {user_id}: {e}")
         raise
 
 
-async def get_active_order(db: aiosqlite.Connection, user_id: int) -> Optional[dict]:
+async def get_active_order(db: aiosqlite.Connection, user_id: int) -> Optional[dict[str, Any]]:
     """
     Get user's active order from database.
 
@@ -218,6 +237,7 @@ async def clear_active_order(db: aiosqlite.Connection, user_id: int) -> None:
         logger.error(f"Error clearing active order for user {user_id}: {e}")
         raise
 
+
 async def save_last_order(
     db: aiosqlite.Connection,
     user_id: int,
@@ -237,7 +257,7 @@ async def save_last_order(
 
     Raises:
         aiosqlite.Error: On SQL execution error
-        json.JSONEncodeError: On serialization error
+        TypeError: On serialization error
     """
     try:
         payload = {"dishes": dishes, "crosses": order_crosses, "tag": tag}
@@ -246,12 +266,12 @@ async def save_last_order(
             (json.dumps(payload, ensure_ascii=False), user_id),
         )
         await db.commit()
-    except (aiosqlite.Error, json.JSONEncodeError) as e:
+    except (aiosqlite.Error, TypeError) as e:
         logger.error(f"Error saving last order for user {user_id}: {e}")
         raise
 
 
-async def get_last_order(db: aiosqlite.Connection, user_id: int) -> Optional[dict]:
+async def get_last_order(db: aiosqlite.Connection, user_id: int) -> Optional[dict[str, Any]]:
     """
     Get user's last completed order.
 
@@ -271,10 +291,11 @@ async def get_last_order(db: aiosqlite.Connection, user_id: int) -> Optional[dic
         row = await cur.fetchone()
         if not row or not row["last_order_json"]:
             return None
-        return json.loads(row["last_order_json"])
+        return cast(dict[str, Any], json.loads(row["last_order_json"]))
     except (aiosqlite.Error, json.JSONDecodeError) as e:
         logger.error(f"Error getting last order for user {user_id}: {e}")
         raise
+
 
 async def finish_order_and_level(
     db: aiosqlite.Connection, user_id: int, tag: Optional[str], order_crosses: int

@@ -8,6 +8,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from loguru import logger
 
+import aiosqlite
+
 from data.texts import ADMIN_ONLY, RESET_SUCCESS
 from database import get_db
 from utils import format_user_mention, is_admin
@@ -28,18 +30,23 @@ async def cmd_reset(message: Message) -> None:
     Raises:
         Exception: On DB or send errors
     """
+    if message.from_user is None:
+        return
     try:
         if not is_admin(str(message.from_user.id)):
             name_mention = format_user_mention(
-                message.from_user.id, message.from_user.first_name
+                message.from_user.id, message.from_user.first_name or ""
             )
             await message.answer(ADMIN_ONLY.format(name=name_mention), parse_mode="HTML")
             return
 
-        async with get_db() as db:
+        async with get_db() as db_conn:
+            db: aiosqlite.Connection = db_conn
             await db.execute("DELETE FROM users")
             await db.commit()
-        name_mention = format_user_mention(message.from_user.id, message.from_user.first_name)
+        name_mention = format_user_mention(
+            message.from_user.id, message.from_user.first_name or ""
+        )
         logger.warning(f"Admin {message.from_user.id} cleared the database")
         await message.answer(RESET_SUCCESS.format(name=name_mention), parse_mode="HTML")
     except Exception as e:

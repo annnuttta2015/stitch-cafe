@@ -4,14 +4,16 @@ Entry point for the Telegram bot "Stitch Cafe".
 Initializes the bot, configures logging and starts update polling.
 """
 import asyncio
+
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from loguru import logger
-from config import BOT_TOKEN
-from commands.start import router as start_router
+
 from commands.order import router as order_router
 from commands.reset import router as reset_router
+from commands.start import router as start_router
 from commands.top import router as top_router
+from config import BOT_TOKEN
 
 # Logging setup via loguru
 logger.add(

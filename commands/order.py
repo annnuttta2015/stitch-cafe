@@ -8,8 +8,10 @@ from typing import Union
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, User
 from loguru import logger
+
+import aiosqlite
 
 from config import CHAT_ID
 from data.dishes import DISHES_BY_LEVEL
@@ -30,12 +32,12 @@ from data.texts import (
 )
 from database import (
     clear_active_order,
+    fetch_user,
     finish_order_and_level,
     get_active_order,
     get_db,
     get_last_order,
     save_active_order,
-    fetch_user,
 )
 from keyboards.main_menu import CALLBACK_DONE, CALLBACK_MY, CALLBACK_NEW, main_menu_kb
 from utils import format_user_mention
@@ -88,7 +90,9 @@ def _order_index(total_orders: int) -> int:
     return (total_orders or 0) + 1
 
 
-async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> None:
+async def _handle_new_order(
+    message_or_query: Union[Message, CallbackQuery],
+) -> None:
     """
     Handler for creating a new order.
 
@@ -103,7 +107,10 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
     try:
         if isinstance(message_or_query, CallbackQuery):
             message = message_or_query.message
-            from_user = message_or_query.from_user
+            if message is None:
+                await message_or_query.answer()
+                return
+            from_user: User | None = message_or_query.from_user
             chat = message.chat
             await message_or_query.answer()
         else:
@@ -111,16 +118,19 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
             from_user = message.from_user
             chat = message.chat
 
+        if from_user is None or not isinstance(message, Message):
+            return
         if CHAT_ID and str(chat.id) != str(CHAT_ID):
             await message.answer(WRONG_CHAT, parse_mode="HTML")
             return
 
-        async with get_db() as db:
-            user = await fetch_user(db, from_user.id, from_user.first_name)
+        async with get_db() as db_conn:
+            db: aiosqlite.Connection = db_conn
+            user = await fetch_user(db, from_user.id, from_user.first_name or "")
             active = await get_active_order(db, user["user_id"])
 
             if active is not None:
-                name_mention = format_user_mention(from_user.id, user["first_name"])
+                name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                 await message.answer(
                     ALREADY_HAS_ORDER.format(name=name_mention),
                     reply_markup=main_menu_kb(),
@@ -158,7 +168,7 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
                         last_crosses = last_order.get("crosses", 0)
                         doubled_dishes = [(name, crosses * 2) for name, crosses in last_dishes]
                         doubled_crosses = last_crosses * 2
-                        name_mention = format_user_mention(from_user.id, user["first_name"])
+                        name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                         text = order_config["text_template"].format(
                             name=name_mention, doubled_crosses=doubled_crosses
                         )
@@ -178,7 +188,7 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
                         half_dishes[0] = (name0, max(1, val0 + diff))
                         half_crosses = half_total
                     lines = "\n".join([DISH_LINE.format(name=n, crosses=v) for (n, v) in half_dishes])
-                    name_mention = format_user_mention(from_user.id, user["first_name"])
+                    name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                     text = order_config["text_template"].format(
                         name=name_mention, half_crosses=half_crosses, dishes=lines
                     )
@@ -187,7 +197,7 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
                     return
                 elif order_type == "regular":
                     dishes = [order_config["dish"]]
-                    name_mention = format_user_mention(from_user.id, user["first_name"])
+                    name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                     text = order_config["text_template"].format(name=name_mention)
                     await save_active_order(db, user["user_id"], dishes, tag)
                     await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
@@ -197,7 +207,7 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
             dishes = await generate_regular_order(level)
             total = sum(x[1] for x in dishes)
             lines = "\n".join([DISH_LINE.format(name=n, crosses=v) for (n, v) in dishes])
-            name_mention = format_user_mention(from_user.id, user["first_name"])
+            name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
             order_number = _order_index(user["total_orders"])
             text = (
                 NEW_ORDER_MESSAGE.format(
@@ -208,12 +218,15 @@ async def _handle_new_order(message_or_query: Union[Message, CallbackQuery]) -> 
             await save_active_order(db, user["user_id"], dishes, None)
             await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error creating order for user {from_user.id}: {e}")
+        logger.error(
+            f"Error creating order for user {from_user.id if from_user is not None else '?'}: {e}"
+        )
         try:
-            await message.answer(
-                "❌ Произошла ошибка при создании заказа. Попробуйте позже.",
-                parse_mode="HTML",
-            )
+            if isinstance(message, Message):
+                await message.answer(
+                    "❌ Произошла ошибка при создании заказа. Попробуйте позже.",
+                    parse_mode="HTML",
+                )
         except Exception:
             pass
 
@@ -230,7 +243,10 @@ async def new_order(message_or_query: Union[Message, CallbackQuery]) -> None:
     """
     await _handle_new_order(message_or_query)
 
-async def _handle_my_order(message_or_query: Union[Message, CallbackQuery]) -> None:
+
+async def _handle_my_order(
+    message_or_query: Union[Message, CallbackQuery],
+) -> None:
     """
     Handler for viewing current active order.
 
@@ -245,7 +261,10 @@ async def _handle_my_order(message_or_query: Union[Message, CallbackQuery]) -> N
     try:
         if isinstance(message_or_query, CallbackQuery):
             message = message_or_query.message
-            from_user = message_or_query.from_user
+            if message is None:
+                await message_or_query.answer()
+                return
+            from_user: User | None = message_or_query.from_user
             chat = message.chat
             await message_or_query.answer()
         else:
@@ -253,15 +272,18 @@ async def _handle_my_order(message_or_query: Union[Message, CallbackQuery]) -> N
             from_user = message.from_user
             chat = message.chat
 
+        if from_user is None or not isinstance(message, Message):
+            return
         if CHAT_ID and str(chat.id) != str(CHAT_ID):
             await message.answer(WRONG_CHAT, parse_mode="HTML")
             return
 
-        async with get_db() as db:
-            user = await fetch_user(db, from_user.id, from_user.first_name)
+        async with get_db() as db_conn:
+            db: aiosqlite.Connection = db_conn
+            user = await fetch_user(db, from_user.id, from_user.first_name or "")
             active = await get_active_order(db, user["user_id"])
             if not active:
-                name_mention = format_user_mention(from_user.id, user["first_name"])
+                name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                 await message.answer(
                     NO_ACTIVE_ORDER.format(name=name_mention),
                     reply_markup=main_menu_kb(),
@@ -271,19 +293,22 @@ async def _handle_my_order(message_or_query: Union[Message, CallbackQuery]) -> N
             dishes = active["dishes"]
             lines = "\n".join([DISH_LINE.format(name=n, crosses=v) for (n, v) in dishes])
             total = sum(v for (_, v) in dishes)
-            name_mention = format_user_mention(from_user.id, user["first_name"])
+            name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
             text = (
                 f"{SHOW_ORDER_HEADER.format(name=name_mention)}\n\n{lines}"
                 + ORDER_TOTAL.format(total=total)
             )
             await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error viewing order for user {from_user.id}: {e}")
+        logger.error(
+            f"Error viewing order for user {from_user.id if from_user is not None else '?'}: {e}"
+        )
         try:
-            await message.answer(
-                "❌ Произошла ошибка при просмотре заказа. Попробуйте позже.",
-                parse_mode="HTML",
-            )
+            if isinstance(message, Message):
+                await message.answer(
+                    "❌ Произошла ошибка при просмотре заказа. Попробуйте позже.",
+                    parse_mode="HTML",
+                )
         except Exception:
             pass
 
@@ -300,7 +325,10 @@ async def my_order(message_or_query: Union[Message, CallbackQuery]) -> None:
     """
     await _handle_my_order(message_or_query)
 
-async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
+
+async def _handle_done(
+    message_or_query: Union[Message, CallbackQuery],
+) -> None:
     """
     Handler for completing an order.
 
@@ -315,7 +343,10 @@ async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
     try:
         if isinstance(message_or_query, CallbackQuery):
             message = message_or_query.message
-            from_user = message_or_query.from_user
+            if message is None:
+                await message_or_query.answer()
+                return
+            from_user: User | None = message_or_query.from_user
             chat = message.chat
             await message_or_query.answer()
         else:
@@ -323,15 +354,18 @@ async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
             from_user = message.from_user
             chat = message.chat
 
+        if from_user is None or not isinstance(message, Message):
+            return
         if CHAT_ID and str(chat.id) != str(CHAT_ID):
             await message.answer(WRONG_CHAT, parse_mode="HTML")
             return
 
-        async with get_db() as db:
-            user = await fetch_user(db, from_user.id, from_user.first_name)
+        async with get_db() as db_conn:
+            db: aiosqlite.Connection = db_conn
+            user = await fetch_user(db, from_user.id, from_user.first_name or "")
             active = await get_active_order(db, user["user_id"])
             if not active:
-                name_mention = format_user_mention(from_user.id, user["first_name"])
+                name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
                 await message.answer(
                     NO_ACTIVE_ORDER.format(name=name_mention),
                     reply_markup=main_menu_kb(),
@@ -339,31 +373,28 @@ async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
                 )
                 return
 
-            # Подсчитываем крестики в текущем заказе
             order_crosses = sum(v for (_, v) in active["dishes"])
-
-            # Завершаем заказ и обновляем статистику
             n_total, level_changed, new_title, total_crosses = await finish_order_and_level(
                 db, user["user_id"], active["tag"], order_crosses
             )
             await clear_active_order(db, user["user_id"])
 
-            # Формируем сообщение в зависимости от событий
-            name_mention = format_user_mention(from_user.id, user["first_name"])
+            name_mention = format_user_mention(from_user.id, user.get("first_name") or "")
             if level_changed:
-                # Новый уровень
                 txt = DONE_WITH_LEVEL_UP.format(
-                    name=name_mention, n=n_total, title=new_title,
-                    total_crosses=total_crosses
+                    name=name_mention,
+                    n=n_total,
+                    title=new_title,
+                    total_crosses=total_crosses,
                 )
             else:
-                # Базовое сообщение
                 txt = DONE_ORDER.format(
-                    name=name_mention, n=n_total,
-                    total_crosses=total_crosses, title=new_title
+                    name=name_mention,
+                    n=n_total,
+                    total_crosses=total_crosses,
+                    title=new_title,
                 )
 
-            # Проверяем достижения (40, 100 и 200 заказов)
             if n_total == 40:
                 txt += GAME_COMPLETE
             elif n_total == 100:
@@ -373,12 +404,15 @@ async def _handle_done(message_or_query: Union[Message, CallbackQuery]) -> None:
 
             await message.answer(txt, reply_markup=main_menu_kb(), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error completing order for user {from_user.id}: {e}")
+        logger.error(
+            f"Error completing order for user {from_user.id if from_user is not None else '?'}: {e}"
+        )
         try:
-            await message.answer(
-                "❌ Произошла ошибка при завершении заказа. Попробуйте позже.",
-                parse_mode="HTML",
-            )
+            if isinstance(message, Message):
+                await message.answer(
+                    "❌ Произошла ошибка при завершении заказа. Попробуйте позже.",
+                    parse_mode="HTML",
+                )
         except Exception:
             pass
 

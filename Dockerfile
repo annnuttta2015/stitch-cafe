@@ -9,7 +9,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Код приложения
 COPY . .
 
-# Папки для БД и логов (создаются при первом запуске)
-RUN mkdir -p data logs
-
 CMD ["python", "main.py"]

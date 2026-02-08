@@ -3,15 +3,19 @@ Handlers for /start and chat member join events.
 
 Greets users and automatically welcomes new chat members.
 """
+from typing import cast
+
 from aiogram import Router
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import CommandStart
 from aiogram.types import ChatMemberUpdated, Message, ReplyKeyboardRemove
 from loguru import logger
 
+import aiosqlite
+
 from config import CHAT_ID
 from data.texts import HELLO, SELECT_ACTION
-from database import ensure_user, get_db
+from database import _UserLike, ensure_user, get_db
 from keyboards.main_menu import main_menu_kb
 from utils import format_user_mention
 
@@ -32,12 +36,17 @@ async def cmd_start(message: Message) -> None:
     Raises:
         Exception: On DB or send errors
     """
+    if message.from_user is None:
+        return
     try:
-        async with get_db() as db:
-            await ensure_user(db, message.from_user)
+        async with get_db() as db_conn:
+            db: aiosqlite.Connection = db_conn
+            await ensure_user(db, cast(_UserLike, message.from_user))
 
         keyboard = main_menu_kb()
-        name_mention = format_user_mention(message.from_user.id, message.from_user.first_name)
+        name_mention = format_user_mention(
+            message.from_user.id, message.from_user.first_name or ""
+        )
         await message.answer(
             HELLO.format(name=name_mention),
             reply_markup=ReplyKeyboardRemove(remove_keyboard=True),
@@ -80,12 +89,15 @@ async def on_new_member(event: ChatMemberUpdated) -> None:
 
             if new_member.is_bot:
                 return
+            if event.bot is None:
+                return
 
-            async with get_db() as db:
-                await ensure_user(db, new_member)
+            async with get_db() as db_conn:
+                db: aiosqlite.Connection = db_conn
+                await ensure_user(db, cast(_UserLike, new_member))
 
             keyboard = main_menu_kb()
-            name_mention = format_user_mention(new_member.id, new_member.first_name)
+            name_mention = format_user_mention(new_member.id, new_member.first_name or "")
             await event.bot.send_message(
                 chat_id=event.chat.id,
                 text=HELLO.format(name=name_mention),

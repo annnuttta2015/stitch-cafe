@@ -4,7 +4,7 @@ Special order events.
 Game events (student, critic, dirty plate, second chef) with probabilities and messages.
 """
 import random
-from typing import Optional
+from typing import Any, Optional, cast
 
 from data.texts import (
     CRITIC_APPEAR,
@@ -66,16 +66,19 @@ def check_special_order(
         (tag, order_config) if special order triggered, else None.
     """
     for tag, order_config in SPECIAL_ORDERS.items():
-        if order_config["min_order_index"] and order_index < order_config["min_order_index"]:
+        min_idx = cast(Optional[int], order_config.get("min_order_index"))
+        max_idx = order_config.get("max_order_index")
+        if min_idx is not None and order_index < min_idx:
             continue
-        if order_config["max_order_index"] and order_index > order_config["max_order_index"]:
+        if max_idx is not None and order_index > cast(int, max_idx):
             continue
-        
-        flag_name = order_config["user_flag"]
+
+        flag_name = cast(str, order_config["user_flag"])
         if user_flags.get(flag_name, 0):
             continue
 
-        if random.random() < order_config["probability"]:
+        prob = cast(float, order_config["probability"])
+        if random.random() < prob:
             return tag, order_config
     
     return None

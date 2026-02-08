@@ -4,6 +4,7 @@ Bot configuration module.
 Loads environment variables from .env and provides bot settings.
 """
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
