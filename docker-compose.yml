@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: .
+    container_name: stitch-cafe-bot
+    env_file: .env
+    restart: always
+    volumes:
+      - .:/app
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+
+volumes:
+  bot_data:
+  bot_logs:
